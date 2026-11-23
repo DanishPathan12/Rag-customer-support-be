@@ -103,9 +103,10 @@ returns:
 
 The API streams the file to the backend's local `ingestion/` directory, then
 uses LangChain to parse and chunk it, Gemini embeddings to generate vectors,
-and Pinecone to store them. Supported source types are `.txt`, `.md`, `.csv`,
-`.json`, `.pdf`, and `.docx`. Only administrators can upload or download files.
-If embedding or Pinecone indexing fails, the API returns `502`; the local file
+and a ChromaDB server to store them. Supported source types are `.txt`, `.md`,
+`.csv`, `.json`, `.pdf`, and `.docx`. Only administrators can upload or download
+files.
+If embedding or ChromaDB indexing fails, the API returns `502`; the local file
 is retained for troubleshooting and retry. An administrator can retry the stored
 file with `POST /admin/ingestion-files/{file_id}/{filename}/index`.
 
@@ -138,7 +139,9 @@ added. Newly signed-up accounts have both names.
 - `401`: missing or invalid bearer token.
 - `403`: the account is not an administrator during admin-login verification.
 - `415`: unsupported ingestion file type.
-- `502`: the file was saved but Gemini/Pinecone embedding ingestion failed.
+- `429`: Gemini embedding quota is temporarily exhausted. Respect the response's
+  `Retry-After` header before retrying the upload or indexing request.
+- `502`: the file was saved but Gemini/ChromaDB embedding ingestion failed.
 - `503`: the API could not send an email; show a retry message.
 - OTPs are six digits, expire after five minutes, and are single-use.
 - Allow users to request a new OTP only after the cooldown; signup/login request

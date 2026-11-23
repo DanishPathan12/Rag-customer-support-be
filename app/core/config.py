@@ -37,12 +37,17 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
     )
-    pinecone_api_key: SecretStr | None = None
-    pinecone_index_name: str | None = None
-    pinecone_namespace: str = "customer-support"
     gemini_embedding_model: str = "gemini-embedding-2"
     gemini_embedding_dimensions: int = Field(default=768, gt=0)
-    pinecone_metric: str = "cosine"
+    gemini_embedding_batch_size: int = Field(default=100, gt=0, le=100)
+    gemini_embedding_max_retries: int = Field(default=3, ge=0, le=10)
+    gemini_embedding_min_request_interval_seconds: float = Field(default=0.7, ge=0)
+    chroma_host: str = "localhost"
+    chroma_port: int = Field(default=8001, gt=0, le=65535)
+    chroma_ssl: bool = False
+    chroma_tenant: str = "default_tenant"
+    chroma_database: str = "default_database"
+    chroma_collection_name: str = "customer-support-knowledge"
     ingestion_chunk_size: int = Field(default=1000, gt=0)
     ingestion_chunk_overlap: int = Field(default=200, ge=0)
 

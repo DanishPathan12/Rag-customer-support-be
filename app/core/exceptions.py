@@ -28,6 +28,12 @@ class AIIngestionError(Exception):
     pass
 
 
+class AIIngestionRateLimitError(Exception):
+    def __init__(self, retry_after_seconds: int) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__("The embedding provider's rate limit was exceeded.")
+
+
 async def invalid_otp_exception_handler(_: Request, __: InvalidOTPError) -> JSONResponse:
     return JSONResponse(
         status_code=400,
@@ -76,6 +82,18 @@ async def ai_ingestion_exception_handler(_: Request, __: AIIngestionError) -> JS
     )
 
 
+async def ai_ingestion_rate_limit_exception_handler(
+    _: Request, exc: AIIngestionRateLimitError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Gemini's embedding quota is temporarily exhausted. Retry shortly."
+        },
+        headers={"Retry-After": str(exc.retry_after_seconds)},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(InvalidOTPError, invalid_otp_exception_handler)
     app.add_exception_handler(EmailDeliveryError, email_delivery_exception_handler)
@@ -86,3 +104,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         ai_ingestion_configuration_exception_handler,
     )
     app.add_exception_handler(AIIngestionError, ai_ingestion_exception_handler)
+    app.add_exception_handler(
+        AIIngestionRateLimitError,
+        ai_ingestion_rate_limit_exception_handler,
+    )

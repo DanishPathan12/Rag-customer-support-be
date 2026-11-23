@@ -1,13 +1,20 @@
 import logging
+import re
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import HTTPException, status
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import Settings
-from app.core.exceptions import AIIngestionConfigurationError, AIIngestionError
+from app.core.exceptions import (
+    AIIngestionConfigurationError,
+    AIIngestionError,
+    AIIngestionRateLimitError,
+)
 from app.modules.ingestion.service import StoredIngestionFile
 
 
@@ -23,8 +30,11 @@ class IngestionResult:
     chunks_indexed: int
 
 
-class GeminiPineconeIngestionService:
-    """Parse one locally stored document, embed its chunks, and upsert them to Pinecone."""
+class GeminiChromaIngestionService:
+    """Parse a local document, embed its chunks, and store them in ChromaDB."""
+
+    _embedding_rate_limit_lock: ClassVar[threading.Lock] = threading.Lock()
+    _next_embedding_request_at: ClassVar[float] = 0.0
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -48,32 +58,29 @@ class GeminiPineconeIngestionService:
 
     def _index_file(self, stored_file: StoredIngestionFile) -> IngestionResult:
         self.ensure_configured()
-        pinecone_index: Any | None = None
-        embeddings: Any | None = None
-        vector_ids: list[str] = []
+        collection: Any | None = None
         try:
             documents = self._load_documents(stored_file)
             chunks = self._split_documents(documents, stored_file)
             if not chunks:
                 raise ValueError("The document did not contain indexable text.")
 
-            pinecone_index, embeddings = self._create_pinecone_index()
-            vector_ids = [f"{stored_file.file_id}:{chunk_number}" for chunk_number in range(len(chunks))]
-            self._upsert_chunks(pinecone_index, embeddings, chunks, vector_ids)
+            embeddings = self._create_embeddings()
+            collection = self._get_or_create_collection()
+            self._replace_file_chunks(collection, embeddings, chunks, stored_file.file_id)
             return IngestionResult(chunks_indexed=len(chunks))
         except AIIngestionConfigurationError:
             raise
+        except AIIngestionRateLimitError:
+            self._delete_file_chunks(collection, stored_file.file_id)
+            raise
         except Exception as exc:
-            self._delete_partial_vectors(pinecone_index, vector_ids)
+            self._delete_file_chunks(collection, stored_file.file_id)
             logger.exception("Embedding ingestion failed for file_id=%s", stored_file.file_id)
             raise AIIngestionError from exc
 
     def _validate_configuration(self) -> None:
-        if (
-            self.settings.google_api_key is None
-            or self.settings.pinecone_api_key is None
-            or not self.settings.pinecone_index_name
-        ):
+        if self.settings.google_api_key is None or not self.settings.chroma_collection_name:
             raise AIIngestionConfigurationError
         if self.settings.ingestion_chunk_overlap >= self.settings.ingestion_chunk_size:
             raise AIIngestionConfigurationError
@@ -129,61 +136,121 @@ class GeminiPineconeIngestionService:
             chunk.metadata["chunk_index"] = chunk_number
         return chunks
 
-    def _create_pinecone_index(self) -> tuple[Any, Any]:
+    def _create_embeddings(self) -> Any:
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        from pinecone.exceptions.exceptions import NotFoundException
-        from pinecone import Pinecone
 
-        embeddings = GoogleGenerativeAIEmbeddings(
+        return GoogleGenerativeAIEmbeddings(
             model=self.settings.gemini_embedding_model,
             google_api_key=self.settings.google_api_key.get_secret_value(),
             task_type="RETRIEVAL_DOCUMENT",
             output_dimensionality=self.settings.gemini_embedding_dimensions,
         )
-        pinecone = Pinecone(api_key=self.settings.pinecone_api_key.get_secret_value())
+
+    def _get_or_create_collection(self) -> Any:
+        import chromadb
+
+        expected_metadata = {
+            "hnsw:space": "cosine",
+            "embedding_model": self.settings.gemini_embedding_model,
+            "embedding_dimensions": self.settings.gemini_embedding_dimensions,
+        }
         try:
-            index_description = pinecone.describe_index(self.settings.pinecone_index_name)
-        except NotFoundException as exc:
+            client = chromadb.HttpClient(
+                host=self.settings.chroma_host,
+                port=self.settings.chroma_port,
+                ssl=self.settings.chroma_ssl,
+                tenant=self.settings.chroma_tenant,
+                database=self.settings.chroma_database,
+            )
+            collection = client.get_or_create_collection(
+                name=self.settings.chroma_collection_name,
+                metadata=expected_metadata,
+            )
+        except Exception as exc:
             raise AIIngestionConfigurationError(
-                "The configured Pinecone index was not found. Create the index or set "
-                "PINECONE_INDEX_NAME to an existing index."
+                "Could not connect to ChromaDB. Start the ChromaDB server and verify "
+                "CHROMA_HOST, CHROMA_PORT, CHROMA_TENANT, and CHROMA_DATABASE."
             ) from exc
-        if index_description.dimension != self.settings.gemini_embedding_dimensions:
+        if any(
+            (collection.metadata or {}).get(key) != value
+            for key, value in expected_metadata.items()
+        ):
             raise AIIngestionConfigurationError(
-                "The configured Pinecone index dimension does not match "
-                "GEMINI_EMBEDDING_DIMENSIONS."
+                "The configured ChromaDB collection uses a different embedding "
+                "configuration. Choose a new CHROMA_COLLECTION_NAME or recreate it."
             )
-        if index_description.metric != self.settings.pinecone_metric:
-            raise AIIngestionConfigurationError(
-                "The configured Pinecone index metric does not match PINECONE_METRIC."
-            )
-        return pinecone.Index(host=index_description.host), embeddings
+        return collection
 
-    def _upsert_chunks(
-        self, index: Any, embeddings: Any, chunks: list[Any], vector_ids: list[str]
+    def _replace_file_chunks(
+        self, collection: Any, embeddings: Any, chunks: list[Any], file_id: str
     ) -> None:
-        for start in range(0, len(chunks), 50):
-            document_batch = chunks[start : start + 50]
-            id_batch = vector_ids[start : start + 50]
-            vectors_for_batch = embeddings.embed_documents(
-                [document.page_content for document in document_batch]
-            )
-            vectors = [
-                {
-                    "id": vector_id,
-                    "values": embedding,
-                    "metadata": {"text": document.page_content, **document.metadata},
-                }
-                for vector_id, embedding, document in zip(
-                    id_batch, vectors_for_batch, document_batch
-                )
+        """Replace one source file so retries cannot leave stale chunks behind."""
+        self._delete_file_chunks(collection, file_id)
+        for start in range(0, len(chunks), self.settings.gemini_embedding_batch_size):
+            document_batch = chunks[
+                start : start + self.settings.gemini_embedding_batch_size
             ]
-            index.upsert(vectors=vectors, namespace=self.settings.pinecone_namespace)
+            id_batch = [
+                f"{file_id}:{chunk_number}"
+                for chunk_number in range(start, start + len(document_batch))
+            ]
+            embedding_batch = self._embed_documents(
+                embeddings, [document.page_content for document in document_batch]
+            )
+            if len(embedding_batch) != len(document_batch):
+                raise ValueError("The embedding provider returned an unexpected vector count.")
+            collection.upsert(
+                ids=id_batch,
+                embeddings=embedding_batch,
+                documents=[document.page_content for document in document_batch],
+                metadatas=[document.metadata for document in document_batch],
+            )
 
-    def _delete_partial_vectors(self, index: Any | None, vector_ids: list[str]) -> None:
-        if index is None or not vector_ids:
+    def _embed_documents(self, embeddings: Any, texts: list[str]) -> list[list[float]]:
+        for attempt in range(self.settings.gemini_embedding_max_retries + 1):
+            self._wait_for_embedding_request_slot()
+            try:
+                return embeddings.embed_documents(texts)
+            except Exception as exc:
+                retry_after_seconds = self._get_retry_after_seconds(exc)
+                if retry_after_seconds is None:
+                    raise
+                if attempt == self.settings.gemini_embedding_max_retries:
+                    raise AIIngestionRateLimitError(retry_after_seconds) from exc
+                logger.warning(
+                    "Gemini embedding quota reached; retrying in %s seconds "
+                    "(attempt %s/%s).",
+                    retry_after_seconds,
+                    attempt + 1,
+                    self.settings.gemini_embedding_max_retries,
+                )
+                time.sleep(retry_after_seconds)
+        raise AssertionError("Embedding retry loop exited unexpectedly.")
+
+    def _wait_for_embedding_request_slot(self) -> None:
+        with self._embedding_rate_limit_lock:
+            now = time.monotonic()
+            wait_seconds = max(0.0, self._next_embedding_request_at - now)
+            self.__class__._next_embedding_request_at = max(
+                now, self._next_embedding_request_at
+            ) + self.settings.gemini_embedding_min_request_interval_seconds
+        if wait_seconds:
+            time.sleep(wait_seconds)
+
+    @staticmethod
+    def _get_retry_after_seconds(exc: Exception) -> int | None:
+        message = str(exc)
+        if "429" not in message or "RESOURCE_EXHAUSTED" not in message:
+            return None
+        match = re.search(r"retry(?:Delay| in)[' :]+([0-9.]+)s", message)
+        if match is None:
+            return 30
+        return max(1, round(float(match.group(1))))
+
+    def _delete_file_chunks(self, collection: Any | None, file_id: str) -> None:
+        if collection is None:
             return
         try:
-            index.delete(ids=vector_ids, namespace=self.settings.pinecone_namespace)
+            collection.delete(where={"file_id": file_id})
         except Exception:
-            logger.exception("Could not roll back partial Pinecone vectors.")
+            logger.exception("Could not clean up ChromaDB chunks for file_id=%s", file_id)
