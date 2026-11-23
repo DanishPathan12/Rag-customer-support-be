@@ -77,12 +77,38 @@ Response:
 Name fields can be `null` for accounts that existed before name collection was
 added. Newly signed-up accounts have both names.
 
+### Knowledge-base question
+
+Call `POST /ai/ask` with a user bearer token and a plain-text question:
+
+```json
+{"question": "When will my order arrive?"}
+```
+
+The response contains an answer grounded in indexed documents and the source
+chunks that were retrieved:
+
+```json
+{
+  "answer": "Orders arrive within three business days. [Source 1]",
+  "sources": [
+    {
+      "file_id": "<uuid>",
+      "filename": "shipping-policy.pdf",
+      "page": 2,
+      "chunk_index": 4
+    }
+  ]
+}
+```
+
 ### Errors and behavior
 
 - `422`: invalid request data (including invalid email or OTP format).
 - `400`: OTP is wrong, expired, already used, or the account cannot be verified.
 - `401`: missing or invalid bearer token.
-- `503`: the API could not send an email; show a retry message.
+- `503`: email delivery or Gemini answer generation is temporarily unavailable;
+  show a retry message and respect `Retry-After` when present.
 - OTPs are six digits, expire after five minutes, and are single-use.
 - Allow users to request a new OTP only after the cooldown; signup/login request
   responses intentionally do not reveal whether the email is registered.

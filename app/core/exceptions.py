@@ -31,7 +31,17 @@ class AIIngestionError(Exception):
 class AIIngestionRateLimitError(Exception):
     def __init__(self, retry_after_seconds: int) -> None:
         self.retry_after_seconds = retry_after_seconds
-        super().__init__("The embedding provider's rate limit was exceeded.")
+        super().__init__("The Gemini API rate limit was exceeded.")
+
+
+class AIResponseError(Exception):
+    pass
+
+
+class AIResponseUnavailableError(Exception):
+    def __init__(self, retry_after_seconds: int) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__("Gemini answer generation is temporarily unavailable.")
 
 
 async def invalid_otp_exception_handler(_: Request, __: InvalidOTPError) -> JSONResponse:
@@ -88,7 +98,26 @@ async def ai_ingestion_rate_limit_exception_handler(
     return JSONResponse(
         status_code=429,
         content={
-            "detail": "Gemini's embedding quota is temporarily exhausted. Retry shortly."
+            "detail": "Gemini's quota is temporarily exhausted. Retry shortly."
+        },
+        headers={"Retry-After": str(exc.retry_after_seconds)},
+    )
+
+
+async def ai_response_exception_handler(_: Request, __: AIResponseError) -> JSONResponse:
+    return JSONResponse(
+        status_code=502,
+        content={"detail": "Unable to generate an answer from the knowledge base."},
+    )
+
+
+async def ai_response_unavailable_exception_handler(
+    _: Request, exc: AIResponseUnavailableError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "The answer service is experiencing high demand. Retry shortly."
         },
         headers={"Retry-After": str(exc.retry_after_seconds)},
     )
@@ -107,4 +136,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(
         AIIngestionRateLimitError,
         ai_ingestion_rate_limit_exception_handler,
+    )
+    app.add_exception_handler(AIResponseError, ai_response_exception_handler)
+    app.add_exception_handler(
+        AIResponseUnavailableError,
+        ai_response_unavailable_exception_handler,
     )

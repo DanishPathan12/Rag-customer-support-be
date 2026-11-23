@@ -42,12 +42,19 @@ class Settings(BaseSettings):
     gemini_embedding_batch_size: int = Field(default=100, gt=0, le=100)
     gemini_embedding_max_retries: int = Field(default=3, ge=0, le=10)
     gemini_embedding_min_request_interval_seconds: float = Field(default=0.7, ge=0)
+    gemini_response_model: str = "gemini-3.8-flash"
+    gemini_response_fallback_model: str = "gemini-3.5-flash-lite"
+    gemini_response_max_output_tokens: int = Field(default=512, gt=0, le=4096)
+    gemini_response_temperature: float = Field(default=0.1, ge=0, le=1)
+    gemini_response_max_retries: int = Field(default=2, ge=0, le=5)
+    gemini_response_retry_delay_seconds: float = Field(default=1, gt=0, le=30)
     chroma_host: str = "localhost"
     chroma_port: int = Field(default=8001, gt=0, le=65535)
     chroma_ssl: bool = False
     chroma_tenant: str = "default_tenant"
     chroma_database: str = "default_database"
     chroma_collection_name: str = "customer-support-knowledge"
+    rag_top_k: int = Field(default=4, gt=0, le=10)
     ingestion_chunk_size: int = Field(default=1000, gt=0)
     ingestion_chunk_overlap: int = Field(default=200, ge=0)
 

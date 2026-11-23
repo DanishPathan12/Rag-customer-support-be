@@ -136,13 +136,13 @@ class GeminiChromaIngestionService:
             chunk.metadata["chunk_index"] = chunk_number
         return chunks
 
-    def _create_embeddings(self) -> Any:
+    def _create_embeddings(self, task_type: str = "RETRIEVAL_DOCUMENT") -> Any:
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
         return GoogleGenerativeAIEmbeddings(
             model=self.settings.gemini_embedding_model,
             google_api_key=self.settings.google_api_key.get_secret_value(),
-            task_type="RETRIEVAL_DOCUMENT",
+            task_type=task_type,
             output_dimensionality=self.settings.gemini_embedding_dimensions,
         )
 

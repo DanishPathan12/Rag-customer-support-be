@@ -96,6 +96,24 @@ The ChromaDB container persists server data in `./chroma-data/`. Existing data
 in the former local `./chroma/` directory is not shared with the server; use the
 retry indexing endpoint above to populate the server collection from saved files.
 
+### Knowledge-base answers
+
+An authenticated user can submit a plain-text question to `POST /ai/ask`. The
+backend embeds the question with `gemini-embedding-2`, retrieves the closest
+ChromaDB chunks, and asks `gemini-3.8-flash` to answer only from that context.
+The response includes the answer and source file/page metadata.
+
+```json
+{"question": "When will my order arrive?"}
+```
+
+Set `GEMINI_RESPONSE_MODEL`, `GEMINI_RESPONSE_FALLBACK_MODEL`,
+`GEMINI_RESPONSE_MAX_RETRIES`, `GEMINI_RESPONSE_MAX_OUTPUT_TOKENS`,
+`GEMINI_RESPONSE_TEMPERATURE`, and `RAG_TOP_K` to tune availability, answer
+quality, and retrieval breadth. A temporary Gemini capacity issue produces HTTP
+`503` with a `Retry-After` header after the configured retries and fallback are
+exhausted.
+
 The local frontend origins `http://localhost:3000` and
 `http://127.0.0.1:3000` are enabled for CORS. If the frontend uses a different
 hostname, add its exact origin to `frontend_origins` in `app/main.py`.
