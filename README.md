@@ -54,6 +54,42 @@ configured; codes are never returned by the API.
 
 Interactive API documentation is available at `/docs`.
 
+### Administrator access
+
+Administrator sign-in uses its own OTP endpoints:
+`POST /auth/admin/login/request-otp` and
+`POST /auth/admin/login/verify-otp`. Apply the latest migration, then grant the
+role only to an existing, verified account from a trusted database session:
+
+```sql
+UPDATE users SET is_admin = TRUE WHERE email = 'admin@example.com';
+```
+
+The OTP request always has a generic response. Only administrator accounts
+receive a code, and normal-login OTPs cannot be used for administrator login.
+
+### Local knowledge-file ingestion
+
+`POST /admin/ingestion-files/upload` accepts a multipart `file` field from an
+authenticated administrator and saves it under `./ingestion/<file-id>/`. The
+API then immediately parses, chunks, embeds, and upserts the document to
+Pinecone. The response is returned only after embedding succeeds and includes
+the file ID, safe filename, admin-protected download URL, and indexed chunk
+count. Supported source types are `.txt`, `.md`, `.csv`, `.json`, `.pdf`, and
+`.docx`.
+
+Set `GOOGLE_API_KEY` (or `GEMINI_API_KEY`), `PINECONE_API_KEY`, and
+`PINECONE_INDEX_NAME` before uploading. Create the Pinecone index first with
+the `PINECONE_METRIC` (cosine by default) and the same dimension as
+`GEMINI_EMBEDDING_DIMENSIONS` (768 by default). The default embedding model is
+`gemini-embedding-2`. Set `INGESTION_DIR`, `INGESTION_MAX_UPLOAD_BYTES`,
+`INGESTION_CHUNK_SIZE`, and `INGESTION_CHUNK_OVERLAP` to tune local storage and
+chunking. The local source file is kept if an upstream embedding or Pinecone
+request fails, while the API returns `502`; it can be retried by uploading it
+again after the provider issue is fixed. For an existing local file, an
+administrator can retry without re-uploading it with
+`POST /admin/ingestion-files/{file-id}/{filename}/index`.
+
 The local frontend origins `http://localhost:3000` and
 `http://127.0.0.1:3000` are enabled for CORS. If the frontend uses a different
 hostname, add its exact origin to `frontend_origins` in `app/main.py`.

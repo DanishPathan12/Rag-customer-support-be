@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.common.utils import as_utc
 from app.core.config import get_settings
-from app.core.exceptions import EmailDeliveryError, InvalidOTPError
+from app.core.exceptions import AdminAccessDeniedError, EmailDeliveryError, InvalidOTPError
 from app.core.security import create_access_token, generate_otp, hash_otp, verify_otp
 from app.modules.auth.mailer import send_otp_email
 from app.modules.auth.models import EmailOTP, OTPPurpose
@@ -59,6 +59,19 @@ class AuthService:
         if user is None:
             raise InvalidOTPError
         self._consume_otp(request, OTPPurpose.LOGIN)
+        return create_access_token(user.id, get_settings())
+
+    def request_admin_login_otp(self, email: str) -> MessageResponse:
+        user = get_user_by_email(self.db, email)
+        if user is not None and user.is_admin:
+            self._issue_otp(email, OTPPurpose.ADMIN_LOGIN)
+        return MessageResponse(message=GENERIC_OTP_MESSAGE)
+
+    def verify_admin_login_otp(self, request: OTPVerification) -> str:
+        user = get_user_by_email(self.db, request.email)
+        if user is None or not user.is_admin:
+            raise AdminAccessDeniedError
+        self._consume_otp(request, OTPPurpose.ADMIN_LOGIN)
         return create_access_token(user.id, get_settings())
 
     def _issue_otp(

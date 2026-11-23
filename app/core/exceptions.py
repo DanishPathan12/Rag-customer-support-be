@@ -10,6 +10,24 @@ class EmailDeliveryError(Exception):
     pass
 
 
+class AdminAccessDeniedError(Exception):
+    pass
+
+
+class IngestionStorageError(Exception):
+    pass
+
+
+class AIIngestionConfigurationError(Exception):
+    def __init__(self, detail: str = "Document ingestion is not configured.") -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+class AIIngestionError(Exception):
+    pass
+
+
 async def invalid_otp_exception_handler(_: Request, __: InvalidOTPError) -> JSONResponse:
     return JSONResponse(
         status_code=400,
@@ -24,6 +42,47 @@ async def email_delivery_exception_handler(_: Request, __: EmailDeliveryError) -
     )
 
 
+async def admin_access_denied_exception_handler(
+    _: Request, __: AdminAccessDeniedError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content={"detail": "Administrator access is required."},
+    )
+
+
+async def ingestion_storage_exception_handler(
+    _: Request, __: IngestionStorageError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Unable to save the ingestion file right now."},
+    )
+
+
+async def ai_ingestion_configuration_exception_handler(
+    _: Request, exc: AIIngestionConfigurationError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": exc.detail},
+    )
+
+
+async def ai_ingestion_exception_handler(_: Request, __: AIIngestionError) -> JSONResponse:
+    return JSONResponse(
+        status_code=502,
+        content={"detail": "The document was saved, but embedding ingestion failed."},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(InvalidOTPError, invalid_otp_exception_handler)
     app.add_exception_handler(EmailDeliveryError, email_delivery_exception_handler)
+    app.add_exception_handler(AdminAccessDeniedError, admin_access_denied_exception_handler)
+    app.add_exception_handler(IngestionStorageError, ingestion_storage_exception_handler)
+    app.add_exception_handler(
+        AIIngestionConfigurationError,
+        ai_ingestion_configuration_exception_handler,
+    )
+    app.add_exception_handler(AIIngestionError, ai_ingestion_exception_handler)

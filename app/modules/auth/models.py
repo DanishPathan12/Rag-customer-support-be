@@ -11,6 +11,7 @@ from app.db.base import Base
 class OTPPurpose(str, Enum):
     SIGNUP = "signup"
     LOGIN = "login"
+    ADMIN_LOGIN = "admin_login"
 
 
 class EmailOTP(Base):

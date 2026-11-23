@@ -55,6 +55,60 @@ Base URL for local development: `http://127.0.0.1:8000`
    `{"email":"person@example.com","otp":"123456"}`.
 3. The successful response has the same token shape as signup.
 
+### Administrator login
+
+Administrators use a separate OTP flow. The account must already exist and be
+marked with the `is_admin` role in the API database.
+
+1. Request an OTP with `POST /auth/admin/login/request-otp` and
+   `{"email":"admin@example.com"}`.
+2. Verify it with `POST /auth/admin/login/verify-otp` and
+   `{"email":"admin@example.com","otp":"123456"}`.
+3. A successful response has the normal bearer-token shape. A non-admin account
+   is rejected with `403` at verification. The OTP request response remains
+   generic, so it does not disclose whether an address has administrator access.
+
+Admin OTPs are purpose-specific: an OTP issued through ordinary login cannot be
+used for administrator verification, and vice versa.
+
+After applying the migration, promote an existing account deliberately from a
+trusted database session:
+
+```sql
+UPDATE users SET is_admin = TRUE WHERE email = 'admin@example.com';
+```
+
+### Administrator ingestion upload
+
+After administrator verification, upload a knowledge file with:
+
+```http
+POST /admin/ingestion-files/upload
+Authorization: Bearer <admin-jwt>
+Content-Type: multipart/form-data
+```
+
+Use a multipart field named `file`. A successful upload is HTTP `201` and
+returns:
+
+```json
+{
+  "file_id": "<uuid>",
+  "filename": "catalog.pdf",
+  "file_url": "http://127.0.0.1:8000/admin/ingestion-files/<uuid>/catalog.pdf",
+  "chunks_indexed": 24,
+  "embedding_status": "completed"
+}
+```
+
+The API streams the file to the backend's local `ingestion/` directory, then
+uses LangChain to parse and chunk it, Gemini embeddings to generate vectors,
+and Pinecone to store them. Supported source types are `.txt`, `.md`, `.csv`,
+`.json`, `.pdf`, and `.docx`. Only administrators can upload or download files.
+If embedding or Pinecone indexing fails, the API returns `502`; the local file
+is retained for troubleshooting and retry. An administrator can retry the stored
+file with `POST /admin/ingestion-files/{file_id}/{filename}/index`.
+
 ### Authenticated user
 
 Call `GET /auth/me` with the returned token:
@@ -82,6 +136,9 @@ added. Newly signed-up accounts have both names.
 - `422`: invalid request data (including invalid email or OTP format).
 - `400`: OTP is wrong, expired, already used, or the account cannot be verified.
 - `401`: missing or invalid bearer token.
+- `403`: the account is not an administrator during admin-login verification.
+- `415`: unsupported ingestion file type.
+- `502`: the file was saved but Gemini/Pinecone embedding ingestion failed.
 - `503`: the API could not send an email; show a retry message.
 - OTPs are six digits, expire after five minutes, and are single-use.
 - Allow users to request a new OTP only after the cooldown; signup/login request

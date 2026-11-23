@@ -70,3 +70,33 @@ def verify_login_otp(
     auth_service: AuthService = Depends(get_auth_service),
 ) -> TokenResponse:
     return TokenResponse(access_token=auth_service.verify_login_otp(payload))
+
+
+@router.post(
+    "/admin/login/request-otp",
+    response_model=MessageResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request an administrator login verification code",
+    description=(
+        "Send a six-digit administrator login code when the email belongs to an "
+        "existing administrator account. The response does not reveal admin status."
+    ),
+)
+def request_admin_login_otp(
+    payload: EmailRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> MessageResponse:
+    return auth_service.request_admin_login_otp(payload.email)
+
+
+@router.post(
+    "/admin/login/verify-otp",
+    response_model=TokenResponse,
+    summary="Verify an administrator login code",
+    description="Verify an administrator-specific emailed code and return a JWT access token.",
+)
+def verify_admin_login_otp(
+    payload: OTPVerification,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> TokenResponse:
+    return TokenResponse(access_token=auth_service.verify_admin_login_otp(payload))
