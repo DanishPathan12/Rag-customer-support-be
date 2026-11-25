@@ -23,6 +23,39 @@ Alembic owns the database schema; the API does not create or alter tables at
 startup. Apply new migrations with `python -m alembic upgrade head` when updating
 the application.
 
+## Server deployment with Docker Compose
+
+`docker-compose.yml` runs the API, PostgreSQL, and ChromaDB together. PostgreSQL
+and ChromaDB are only reachable on the private Docker network; only the API port
+is published on the host. All database, ChromaDB, and uploaded-ingestion data is
+stored in named Docker volumes.
+
+1. Copy `.env.example` to `.env` and set strong values for `POSTGRES_PASSWORD`,
+   `JWT_SECRET`, and `OTP_PEPPER`. Also set the SMTP and Gemini values required
+   by your deployment. Set `CORS_ORIGINS` to your public frontend origin (or
+   comma-separated origins). Do not commit `.env`.
+2. From this directory, start (or update) the stack:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+   The API applies Alembic migrations before Uvicorn starts. It is available at
+   `http://<server>:8000/docs` by default. Set `API_PORT` to publish a different
+   host port, or set `API_BIND_ADDRESS=127.0.0.1` when a reverse proxy on the
+   server is the only public entry point.
+3. Check the running services and API logs:
+
+   ```bash
+   docker compose ps
+   docker compose logs -f api
+   ```
+
+For backups, save the `postgres-data`, `chroma-data`, and `ingestion-data` Docker
+volumes. Do not use `docker compose down -v` in production: it removes those
+volumes and their persisted data. ChromaDB is deliberately not published to the
+host; use `docker compose exec chromadb ...` for server-side diagnostics.
+
 ### Existing database
 
 For a database created by the earlier `create_all()` startup, first mark its
