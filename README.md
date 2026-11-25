@@ -28,7 +28,9 @@ the application.
 `docker-compose.yml` runs the API, PostgreSQL, and ChromaDB together. PostgreSQL
 and ChromaDB are only reachable on the private Docker network; only the API port
 is published on the host. All database, ChromaDB, and uploaded-ingestion data is
-stored in named Docker volumes.
+stored in named Docker volumes. The Chroma image is deliberately kept free of an
+in-container HTTP health probe because its published minimal image does not ship
+with an HTTP client; the API waits until the Chroma container process starts.
 
 1. Copy `.env.example` to `.env` and set strong values for `POSTGRES_PASSWORD`,
    `JWT_SECRET`, and `OTP_PEPPER`. Also set the SMTP and Gemini values required

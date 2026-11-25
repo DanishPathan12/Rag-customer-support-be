@@ -27,7 +27,12 @@ services:
       postgres:
         condition: service_healthy
       chromadb:
-        condition: service_healthy
+        # The published Chroma image is intentionally minimal and has no HTTP
+        # client binary for an in-container health probe. The API does not open
+        # a Chroma connection during startup, so waiting for its process to
+        # start is sufficient; requests still return a clear error if Chroma is
+        # unavailable later.
+        condition: service_started
     healthcheck:
       test:
         - CMD
@@ -59,21 +64,9 @@ services:
 
   chromadb:
     image: chromadb/chroma:1.0.20
-    environment:
-      IS_PERSISTENT: "TRUE"
-      PERSIST_DIRECTORY: /chroma/chroma
     volumes:
-      - chroma-data:/chroma/chroma
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v2/heartbeat')
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
+      # chromadb/chroma:1.0.20 reports /data as its persistence directory.
+      - chroma-data:/data
     restart: unless-stopped
 
 volumes:
