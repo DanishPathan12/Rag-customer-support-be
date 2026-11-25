@@ -58,6 +58,32 @@ volumes. Do not use `docker compose down -v` in production: it removes those
 volumes and their persisted data. ChromaDB is deliberately not published to the
 host; use `docker compose exec chromadb ...` for server-side diagnostics.
 
+### Nginx API reverse proxy
+
+PM2 is not used for this Dockerized Python backend. To expose only the API over
+HTTPS, set `API_BIND_ADDRESS=127.0.0.1` in `.env`, set `CORS_ORIGINS` to the
+public frontend origin, and start the Compose stack. PostgreSQL and ChromaDB
+must remain unexposed.
+
+After DNS for an API hostname points to the server and ports 80 and 443 are
+open in the firewall/security group, install and configure Nginx:
+
+```bash
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+sudo cp deploy/nginx/customer-support-api.conf.example /etc/nginx/sites-available/customer-support-api
+sudo nano /etc/nginx/sites-available/customer-support-api
+# Replace YOUR_API_DOMAIN, for example api.support.example.com.
+sudo ln -s /etc/nginx/sites-available/customer-support-api /etc/nginx/sites-enabled/customer-support-api
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl reload nginx
+sudo certbot --nginx -d YOUR_API_DOMAIN --redirect
+```
+
+Validate it with `curl -f https://YOUR_API_DOMAIN/docs`, `docker compose ps`,
+and `docker compose logs -f api`.
+
 ### Existing database
 
 For a database created by the earlier `create_all()` startup, first mark its
